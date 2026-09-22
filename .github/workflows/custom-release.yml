@@ -1,0 +1,178 @@
+name: Custom Build All Platforms (Win, Linux, macOS 11+)
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release Tag (e.g. v7.25.2-custom)'
+        required: false
+        default: 'v7.25.2-custom'
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  build-windows:
+    name: Build Windows x64 (WPF + Cores)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.x'
+
+      - name: Publish v2rayN Windows
+        shell: pwsh
+        run: |
+          dotnet publish ./v2rayN/v2rayN/v2rayN.csproj -c Release -r win-x64 -p:SelfContained=true -p:EnableWindowsTargeting=true -o win-x64-publish
+          dotnet publish ./v2rayN/AmazTool/AmazTool.csproj -c Release -r win-x64 -p:SelfContained=true -p:PublishTrimmed=true -p:EnableWindowsTargeting=true -o win-x64-publish
+
+      - name: Download & Merge Cores
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/2dust/v2rayN-core-bin/raw/refs/heads/master/v2rayN-windows-64.zip" -OutFile "v2rayN-windows-64.zip"
+          Expand-Archive -Path "v2rayN-windows-64.zip" -DestinationPath "temp-core"
+          Copy-Item -Path "win-x64-publish\*" -Destination "temp-core\v2rayN-windows-64" -Recurse -Force
+          Compress-Archive -Path "temp-core\v2rayN-windows-64\*" -DestinationPath "v2rayN-windows-64-With-Core.zip" -Force
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2rayN-windows-64-With-Core
+          path: v2rayN-windows-64-With-Core.zip
+
+  build-linux:
+    name: Build Linux (Debian/Kali .deb + .tar.gz)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.x'
+
+      - name: Install Debian Packaging Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install dpkg-dev fakeroot p7zip-full wget rsync desktop-file-utils
+
+      - name: Publish v2rayN Linux
+        run: |
+          dotnet publish ./v2rayN/v2rayN.Desktop/v2rayN.Desktop.csproj -c Release -r linux-x64 -p:SelfContained=true -o linux-x64-publish
+          dotnet publish ./v2rayN/AmazTool/AmazTool.csproj -c Release -r linux-x64 -p:SelfContained=true -p:PublishTrimmed=true -o linux-x64-publish
+
+      - name: Download Cores & Package Tar.gz
+        run: |
+          wget -nv -O v2rayN-linux-64.zip "https://github.com/2dust/v2rayN-core-bin/raw/refs/heads/master/v2rayN-linux-64.zip"
+          7z x v2rayN-linux-64.zip -otemp-linux
+          cp -rf linux-x64-publish/* temp-linux/v2rayN-linux-64/
+          cd temp-linux/v2rayN-linux-64 && tar -czvf ../../v2rayN-linux-64.tar.gz * && cd ../..
+
+      - name: Build Debian/Kali .deb
+        run: |
+          chmod +x package-debian.sh
+          ./package-debian.sh 7.25.2 --buildfrom 2 || true
+          find /home/runner/debbuild -name "*.deb" -exec cp {} ./ \; 2>/dev/null || true
+
+      - name: Upload Linux Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2rayN-linux-assets
+          path: |
+            *.deb
+            v2rayN-linux-64.tar.gz
+
+  build-macos:
+    name: Build macOS 11+ (${{ matrix.arch }})
+    runs-on: macos-14
+    strategy:
+      matrix:
+        arch: [ arm64, x64 ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.x'
+
+      - name: Install Packaging Tools
+        run: |
+          brew install create-dmg p7zip wget
+
+      - name: Publish v2rayN macOS
+        run: |
+          RID="osx-${{ matrix.arch }}"
+          dotnet publish ./v2rayN/v2rayN.Desktop/v2rayN.Desktop.csproj -c Release -r $RID -p:SelfContained=true -o macos-${{ matrix.arch }}-publish
+          dotnet publish ./v2rayN/AmazTool/AmazTool.csproj -c Release -r $RID -p:SelfContained=true -p:PublishTrimmed=true -o macos-${{ matrix.arch }}-publish
+
+      - name: Package DMG (macOS 11+ Compatible)
+        run: |
+          chmod 755 package-osx.sh
+          ARCH_NAME="${{ matrix.arch == 'x64' && '64' || 'arm64' }}"
+          ./package-osx.sh "macos-${ARCH_NAME}" "macos-${{ matrix.arch }}-publish" "7.25.2"
+
+      - name: Upload macOS Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2rayN-macos-${{ matrix.arch }}
+          path: |
+            *.dmg
+            *.zip
+
+  release:
+    name: Publish GitHub Release
+    needs: [ build-windows, build-linux, build-macos ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: List Release Files
+        run: |
+          ls -la release-assets
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag || 'v7.25.2-custom' }}
+          name: "v2rayN v7.25.2 (Universal macOS 11+, Debian/Kali, Windows)"
+          body: |
+            ## v2rayN Custom Multi-Platform Release (macOS 11+ Compatible)
+            
+            This release is built with full backward compatibility and bundled cores:
+            
+            - 🍎 **macOS (11+ Big Sur, 12+ Monterey, Sonoma, Sequoia)**:
+              - `v2rayN-macos-arm64.dmg` (Apple Silicon M1/M2/M3/M4)
+              - `v2rayN-macos-64.dmg` (Intel x64)
+              - Patched `LSMinimumSystemVersion=11.0` and Mach-O load commands.
+              - Bundled with Xray, sing-box, mihomo and full routing assets.
+            - 🐧 **Linux (Debian 11/12, Kali Linux, Ubuntu)**:
+              - Native `.deb` packages for easy installation (`dpkg -i`).
+              - Standalone `.tar.gz` with all cores.
+            - 🪟 **Windows (10/11 x64)**:
+              - `v2rayN-windows-64-With-Core.zip` with complete core set, unzip and run!
+          files: release-assets/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

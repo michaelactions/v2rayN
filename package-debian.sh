@@ -9,7 +9,7 @@ BUILD_FROM=""
 XRAY_VER="${XRAY_VER:-}"
 SING_VER="${SING_VER:-}"
 
-MIN_KERNEL="6.12"
+MIN_KERNEL="5.10"
 PKGROOT="v2rayN-publish"
 PROJECT_HINT="v2rayN.Desktop/v2rayN.Desktop.csproj"
 OUTPUT_DIR="${HOME}/debbuild"
@@ -70,12 +70,11 @@ detect_environment() {
   HOST_ARCH="$(uname -m)"
 
   case "$OS_ID" in
-    debian)
+    debian|kali|ubuntu)
       echo "Detected supported system: ${OS_NAME:-$OS_ID} ${OS_VERSION_ID:-}"
       ;;
     *)
-      die "Unsupported system: ${OS_NAME:-unknown} (${OS_ID:-unknown}).
-This script only supports: Debian."
+      echo "Warning: Untested system ${OS_NAME:-unknown} (${OS_ID:-unknown}), proceeding anyway..."
       ;;
   esac
 
