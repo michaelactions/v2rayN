@@ -83,8 +83,9 @@ jobs:
       - name: Build Debian/Kali .deb
         run: |
           chmod +x package-debian.sh
-          ./package-debian.sh 7.25.2 --buildfrom 2 || true
+          ./package-debian.sh 7.25.2
           find /home/runner/debbuild -name "*.deb" -exec cp {} ./ \; 2>/dev/null || true
+          ls -la *.deb || true
 
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
