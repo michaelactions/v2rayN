@@ -91,6 +91,12 @@ detect_environment() {
 }
 
 install_dependencies() {
+  if command -v dpkg-deb >/dev/null 2>&1 && command -v dotnet >/dev/null 2>&1; then
+    echo "[OK] Dependencies already satisfied in CI/system environment."
+    mkdir -p "$OUTPUT_DIR"
+    return 0
+  fi
+
   local install_ok=0
   local foreign_arch=""
 
